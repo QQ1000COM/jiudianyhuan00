@@ -37,4 +37,4 @@ jobs:
           git config --local user.name "github-actions[bot]"
           git add itvlist.txt
           git commit -m "自定更新： itvlist.txt" || echo "No changes"
-          git push --force
+          git push
