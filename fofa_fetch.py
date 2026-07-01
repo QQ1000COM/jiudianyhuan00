@@ -1,10 +1,14 @@
+import logging
 import os
 import re
 import requests
+import socket
 import time
 import concurrent.futures
 import subprocess
 from datetime import datetime, timezone, timedelta
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 # ===============================
 # 配置区
@@ -156,8 +160,10 @@ CHANNEL_MAPPING = {
 def get_run_count():
     if os.path.exists(COUNTER_FILE):
         try:
-            return int(open(COUNTER_FILE, "r", encoding="utf-8").read().strip() or "0")
-        except Exception:
+            with open(COUNTER_FILE, "r", encoding="utf-8") as f:
+                return int(f.read().strip() or "0")
+        except (ValueError, OSError) as e:
+            logging.warning("读取计数文件失败，重置为 0：%s", e)
             return 0
     return 0
 
@@ -165,8 +171,9 @@ def save_run_count(count):
     try:
         with open(COUNTER_FILE, "w", encoding="utf-8") as f:
             f.write(str(count))
-    except Exception as e:
-        print(f"⚠️ 写计数文件失败：{e}")
+    except OSError as e:
+        logging.error("写计数文件失败：%s", e)
+        raise
 
 
 # ===============================
@@ -352,7 +359,14 @@ def third_stage():
                 timeout=timeout + 2
             )
             return b"codec_type" in result.stdout
-        except Exception:
+        except FileNotFoundError:
+            logging.error("ffprobe 未找到，请确保已安装 ffmpeg")
+            return False
+        except subprocess.TimeoutExpired:
+            logging.debug("检测超时：%s", url)
+            return False
+        except OSError as e:
+            logging.warning("检测流失败 %s: %s", url, e)
             return False
 
     # 别名映射
@@ -374,12 +388,17 @@ def third_stage():
                         ip_port = line.strip()
                         if ip_port:
                             ip_info[ip_port] = province_operator
-            except Exception as e:
-                print(f"⚠️ 读取 {fname} 失败：{e}")
+            except OSError as e:
+                logging.warning("读取 %s 失败：%s", fname, e)
 
     # 读取 zubo.txt 并按 ip:port 分组
     groups = {}
-    with open(ZUBO_FILE, encoding="utf-8") as f:
+    try:
+        zf = open(ZUBO_FILE, encoding="utf-8")
+    except OSError as e:
+        logging.error("无法读取 %s：%s", ZUBO_FILE, e)
+        return
+    with zf as f:
         for line in f:
             if "," not in line:
                 continue
@@ -468,17 +487,30 @@ def third_stage():
 # 文件推送
 def push_all_files():
     print("🚀 推送所有更新文件到 GitHub...")
-    try:
-        os.system('git config --global user.name "github-actions"')
-        os.system('git config --global user.email "github-actions@users.noreply.github.com"')
-    except Exception:
-        pass
 
-    os.system("git add 计数.txt || true")
-    os.system("git add ip/*.txt || true")
-    os.system("git add IPTV.txt || true")
-    os.system('git commit -m "自动更新：计数、IP文件、IPTV.txt" || echo "⚠️ 无需提交"')
-    os.system("git push origin main || echo '⚠️ 推送失败'")
+    def run_cmd(cmd, check=True):
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        if check and result.returncode != 0:
+            logging.warning("命令失败 [%s]: %s", cmd, result.stderr.strip())
+        return result
+
+    run_cmd('git config --global user.name "github-actions"', check=False)
+    run_cmd('git config --global user.email "github-actions@users.noreply.github.com"', check=False)
+
+    run_cmd("git add 计数.txt", check=False)
+    run_cmd("git add ip/*.txt", check=False)
+    run_cmd("git add IPTV.txt", check=False)
+
+    commit_result = run_cmd('git commit -m "自动更新：计数、IP文件、IPTV.txt"', check=False)
+    if commit_result.returncode != 0:
+        logging.info("无需提交或提交失败：%s", commit_result.stdout.strip())
+        return
+
+    push_result = run_cmd("git push origin main", check=False)
+    if push_result.returncode != 0:
+        logging.error("推送失败：%s", push_result.stderr.strip())
+    else:
+        logging.info("推送成功")
 
 # ===============================
 # 主执行逻辑
