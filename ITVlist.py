@@ -1,11 +1,15 @@
 import asyncio
 import aiohttp
+import logging
 import re
 import datetime
 import requests
 import os
+import sys
 import time
 from urllib.parse import urljoin
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 URL_FILE = "https://raw.githubusercontent.com/kakaxi-1/zubo/main/ip_urls.txt"
 
@@ -130,7 +134,6 @@ RESULTS_PER_CHANNEL = 20
 
 def load_urls():
     """从 GitHub 下载 IPTV IP 段列表"""
-    import requests
     try:
         resp = requests.get(URL_FILE, timeout=5)
         resp.raise_for_status()
@@ -139,7 +142,7 @@ def load_urls():
         return urls
     except Exception as e:
         print(f"❌ 下载 {URL_FILE} 失败: {e}")
-        exit()
+        sys.exit(1)
 
 async def generate_urls(url):
     modified_urls = []
@@ -169,7 +172,8 @@ async def check_url(session, url, semaphore):
             async with session.get(url, timeout=1) as resp:#===========================JSON访问时间
                 if resp.status == 200:
                     return url
-        except:
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+            logging.debug("check_url failed for %s: %s", url, e)
             return None
 
 async def fetch_json(session, url, semaphore):
@@ -194,7 +198,8 @@ async def fetch_json(session, url, semaphore):
 
                     results.append((name, urlx))
                 return results
-        except:
+        except (aiohttp.ClientError, asyncio.TimeoutError, KeyError, ValueError, OSError) as e:
+            logging.debug("fetch_json failed for %s: %s", url, e)
             return []
 
 async def measure_speed(session, url, semaphore):
@@ -206,7 +211,8 @@ async def measure_speed(session, url, semaphore):
                     return int((time.time() - start) * 1000)
                 else:
                     return 999999
-        except:
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+            logging.debug("measure_speed failed for %s: %s", url, e)
             return 999999
 
 def is_valid_stream(url):
