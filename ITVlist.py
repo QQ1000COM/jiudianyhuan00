@@ -5,7 +5,7 @@ import datetime
 import requests
 import os
 import time
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 URL_FILE = "https://raw.githubusercontent.com/kakaxi-1/zubo/main/ip_urls.txt"
 
@@ -210,7 +210,8 @@ async def measure_speed(session, url, semaphore):
             return 999999
 
 def is_valid_stream(url):
-    if url.startswith(("rtp://", "udp://", "rtsp://")):
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
         return False
     if "239." in url:
         return False
@@ -219,7 +220,7 @@ def is_valid_stream(url):
     if "/paiptv/" in url or "/00/SNM/" in url or "/00/CHANNEL" in url:
         return False
     valid_ext = (".m3u8", ".ts", ".flv", ".mp4", ".mkv")
-    return url.startswith("http") and any(ext in url for ext in valid_ext)
+    return any(ext in url for ext in valid_ext)
 
 async def main():
     print("🚀 开始运行 ITVlist 脚本")

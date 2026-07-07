@@ -1,10 +1,12 @@
 import os
 import re
+import socket
 import requests
 import time
 import concurrent.futures
 import subprocess
 from datetime import datetime, timezone, timedelta
+from urllib.parse import urlparse
 
 # ===============================
 # 配置区
@@ -231,7 +233,7 @@ def first_stage():
             else:
                 ip = host
 
-            res = requests.get(f"http://ip-api.com/json/{ip}?lang=zh-CN", timeout=10)
+            res = requests.get(f"https://ip-api.com/json/{ip}?lang=zh-CN", timeout=10)
             data = res.json()
 
             province = data.get("regionName", "未知")
@@ -242,6 +244,13 @@ def first_stage():
 
             if isp == "未知":
                 print(f"⚠️ 无法判断运营商，跳过：{ip_port}")
+                continue
+
+            # Sanitize province name to prevent path traversal
+            province = re.sub(r'[/\\\.\.]+', '', province)
+            isp = re.sub(r'[/\\\.\.]+', '', isp)
+            if not province or not isp:
+                print(f"⚠️ 无效省份/运营商名称，跳过：{ip_port}")
                 continue
 
             fname = f"{province}{isp}.txt"
@@ -344,6 +353,10 @@ def third_stage():
         return
 
     def check_stream(url, timeout=5):
+        # Validate URL scheme to prevent SSRF via file://, gopher://, etc.
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False
         try:
             result = subprocess.run(
                 ["ffprobe", "-v", "error", "-show_streams", "-i", url],
@@ -468,17 +481,27 @@ def third_stage():
 # 文件推送
 def push_all_files():
     print("🚀 推送所有更新文件到 GitHub...")
-    try:
-        os.system('git config --global user.name "github-actions"')
-        os.system('git config --global user.email "github-actions@users.noreply.github.com"')
-    except Exception:
-        pass
-
-    os.system("git add 计数.txt || true")
-    os.system("git add ip/*.txt || true")
-    os.system("git add IPTV.txt || true")
-    os.system('git commit -m "自动更新：计数、IP文件、IPTV.txt" || echo "⚠️ 无需提交"')
-    os.system("git push origin main || echo '⚠️ 推送失败'")
+    subprocess.run(
+        ["git", "config", "--global", "user.name", "github-actions"],
+        check=False
+    )
+    subprocess.run(
+        ["git", "config", "--global", "user.email", "github-actions@users.noreply.github.com"],
+        check=False
+    )
+    subprocess.run(["git", "add", "计数.txt"], check=False)
+    subprocess.run(["git", "add", "ip/"], check=False)
+    subprocess.run(["git", "add", "IPTV.txt"], check=False)
+    result = subprocess.run(
+        ["git", "commit", "-m", "自动更新：计数、IP文件、IPTV.txt"],
+        check=False
+    )
+    if result.returncode != 0:
+        print("⚠️ 无需提交")
+        return
+    result = subprocess.run(["git", "push", "origin", "main"], check=False)
+    if result.returncode != 0:
+        print("⚠️ 推送失败")
 
 # ===============================
 # 主执行逻辑
